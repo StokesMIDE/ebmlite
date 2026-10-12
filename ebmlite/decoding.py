@@ -14,6 +14,7 @@ __all__ = ['readElementID', 'readElementSize', 'readFloat', 'readInt',
            'readUInt', 'readDate', 'readString', 'readUnicode']
 
 from datetime import datetime, timedelta
+import os
 import struct
 from typing import BinaryIO, Optional, Tuple
 import warnings
@@ -232,3 +233,26 @@ def readDate(stream: BinaryIO, size: int = 8) -> datetime:
     nanoseconds = _struct_int64_unpack(data)[0]
     delta = timedelta(microseconds=(nanoseconds // 1000))
     return datetime(2001, 1, 1, tzinfo=None) + delta
+
+
+# ==============================================================================
+# --- Native accelerator
+# ==============================================================================
+
+# The pure-Python implementations, kept for reference and testing.
+PY_IMPLEMENTATIONS = {f.__name__: f for f in (readElementID, readElementSize,
+                                              readUInt, readInt, readFloat,
+                                              readString, readUnicode,
+                                              readDate)}
+
+# The optional C extension. Setting the environment variable `EBMLITE_NO_C`
+# to anything other than an empty string or ``0`` forces pure Python.
+_cebml = None
+if os.environ.get('EBMLITE_NO_C', '0') in ('', '0'):
+    try:
+        from . import _cebml
+        from ._cebml import (readElementID, readElementSize,  # noqa: F811
+                             readUInt, readInt, readFloat, readString,
+                             readUnicode, readDate)
+    except ImportError:
+        _cebml = None

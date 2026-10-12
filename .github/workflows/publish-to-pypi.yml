@@ -6,34 +6,74 @@ on:
       - master
 
 jobs:
-  build-n-publish:
-    name: Build and publish Python 🐍 distributions 📦 to PyPI
+  build-wheels:
+    name: Build binary wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build wheels
+      uses: pypa/cibuildwheel@v3.2.0
+      env:
+        CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
+        CIBW_TEST_REQUIRES: pytest pytest-cov
+        # Check the extension loads from the installed wheel (before changing
+        # to the project directory, where the source would be imported
+        # instead), then run its tests from the project directory (they use
+        # relative paths to data files). `pytest` rather than
+        # `python -m pytest` and `--import-mode=importlib` keep the source
+        # tree off `sys.path`.
+        CIBW_TEST_COMMAND: >-
+          python -c "import ebmlite.decoding as d; assert d._cebml is not None"
+          && cd {project}
+          && pytest tests/test_cebml.py -p no:cacheprovider --import-mode=importlib
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: wheels-${{ matrix.os }}
+        path: ./wheelhouse/*.whl
+
+  build-sdist:
+    name: Build source tarball
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@master
-    
+    - uses: actions/checkout@v4
+
     - name: Set up Python 3.12
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: 3.12
-    
+
     - name: Install pypa/build
-      run: >-
-        python -m
-        pip install
-        build
-        --user
-    
-    - name: Build a binary wheel and a source tarball
-      run: >-
-        python -m
-        build
-        --outdir dist/
-        .
+      run: python -m pip install build --user
+
+    - name: Build a source tarball
+      run: python -m build --sdist --outdir dist/ .
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: sdist
+        path: ./dist/*
+
+  publish:
+    name: Publish distributions 📦 to PyPI
+    needs: [build-wheels, build-sdist]
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: dist
+        merge-multiple: true
 
     - name: Publish distribution 📦 to PyPI
-      uses: pypa/gh-action-pypi-publish@master
+      uses: pypa/gh-action-pypi-publish@release/v1
       with:
         user: __token__
         password: ${{ secrets.PYPI_API_TOKEN }}
