@@ -24,6 +24,14 @@ with open('README.md', 'r') as fh:
 INSTALL_REQUIRES = [
     ]
 
+# Optional native accelerator for reading/decoding. If it can't be built
+# (e.g. no compiler), ebmlite installs and runs as pure Python.
+EXTENSIONS = [
+    setuptools.Extension('ebmlite._cebml',
+                         sources=['ebmlite/_cebml.c'],
+                         optional=True),
+    ]
+
 TEST_REQUIRES = [
     'pytest>=4.6',
     'codecov',
@@ -40,7 +48,7 @@ setuptools.setup(
         version=get_version('ebmlite/__init__.py'),
         author='Mide Technology',
         author_email='help@mide.com',
-        description='A lightweight, "pure Python" library for parsing EBML (Extensible Binary Markup Language) data.',
+        description='A lightweight, "pure Python" library (with an optional C accelerator) for parsing EBML (Extensible Binary Markup Language) data.',
         long_description=long_description,
         long_description_content_type='text/markdown',
         url='https://github.com/MideTechnology/ebmlite/tree/master',
@@ -73,6 +81,7 @@ setuptools.setup(
             'list-schemata=ebmlite.tools.list_schemata:main',
         ]},
         test_suite='tests',
+        ext_modules=EXTENSIONS,
         install_requires=INSTALL_REQUIRES,
         extras_require={
             'test': INSTALL_REQUIRES + TEST_REQUIRES,

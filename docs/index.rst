@@ -14,6 +14,11 @@ and efficiently, and that's about it. *ebmlite* can also do basic EBML encoding,
 but more advanced EBML manipulation (e.g. with a proper `DOM <https://en.wikipedia.org/wiki/Document_Object_Model>`_)
 are beyond its scope, and are better left to other libraries.
 
+*ebmlite* includes an optional native extension that speeds up reading and
+decoding. It is used automatically if it was built when *ebmlite* was installed;
+otherwise, *ebmlite* runs as pure Python. Setting the environment variable
+``EBMLITE_NO_C`` to ``1`` forces the use of pure Python.
+
 
 EBML Overview (the short version)
 =================================

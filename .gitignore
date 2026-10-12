@@ -26,3 +26,7 @@ venv?
 
 # Sphinx documentation
 docs/_build/
+
+# Compiled extensions
+*.pyd
+*.so

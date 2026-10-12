@@ -59,6 +59,7 @@ from xml.etree import ElementTree as ET
 from .decoding import readElementID, readElementSize
 from .decoding import readFloat, readInt, readUInt, readDate
 from .decoding import readString, readUnicode
+from .decoding import _cebml
 from . import encoding
 from . import schemata
 
@@ -579,6 +580,65 @@ class MasterElement(Element):
 
         return el, payloadOffset + el.size
 
+    def _scanElements(self,
+                      pos: int,
+                      end: Optional[int],
+                      nocache: bool = False,
+                      validIds: Optional[set] = None):
+        """ Generate consecutive elements read from the stream using the
+            native C extension. Equivalent to repeatedly calling
+            `parseElement()`, but much faster. Only call this if the C
+            extension is available.
+
+            :param pos: The offset of the first element.
+            :param end: The offset at which to stop (e.g. the end of this
+                element's payload), or `None` to read to the end of the
+                stream.
+            :param nocache: If `True`, the parsed elements' `precache`
+                attributes are ignored. See `parseElement()`.
+            :param validIds: If not `None`, a set of element IDs; reading
+                stops at the first element with an ID not in the set.
+            :return: A generator yielding each element.
+        """
+        stream = self.stream
+        schema = self.schema
+        elements = schema.elements
+        unknown = schema.UNKNOWN
+        scanTypes = None if nocache else schema._getScanTypes()
+
+        # Read in progressively larger batches, so getting only the first
+        # few elements (e.g. indexing a `Document`) stays fast.
+        batchSize = 16
+
+        while True:
+            entries, done = _cebml.scanElements(stream, pos, end, scanTypes,
+                                                validIds, batchSize)
+            for eid, offset, esize, payloadOffset, value in entries:
+                etype = elements.get(eid)
+                if etype is None:
+                    el = unknown(stream, offset, esize, payloadOffset,
+                                 eid=eid, schema=schema)
+                else:
+                    el = etype(stream, offset, esize, payloadOffset)
+
+                if el.precache and not nocache:
+                    if value is None:
+                        # Not decoded by the C extension (e.g. not a simple
+                        # type, or bad/truncated data); read it in Python.
+                        stream.seek(payloadOffset)
+                        value = el.parse(stream, el.size)
+                    el._value = value
+
+                yield el
+
+            if done or not entries:
+                return
+
+            # Note: an element with an unknown size (`None`) is always the
+            # last in a batch; its `size` property determines it.
+            pos = el.payloadOffset + el.size
+            batchSize = min(batchSize * 2, 1024)
+
     @classmethod
     def _isValidChild(cls, elId: int) -> bool:
         """ Is the given element ID represent a valid sub-element, i.e.
@@ -604,6 +664,22 @@ class MasterElement(Element):
             # An "infinite" element (size specified in file is all 0xFF)
             pos = self.payloadOffset
             numChildren = 0
+
+            # Use the C extension, unless `_isValidChild()` was overridden.
+            if (_cebml is not None and self._isValidChild.__func__
+                    is MasterElement._isValidChild.__func__):
+                if self.children:
+                    validIds = self.children.union(self.schema.globals)
+                else:
+                    validIds = frozenset()
+                end = pos
+                for el in self._scanElements(pos, None, True, validIds):
+                    numChildren += 1
+                    end = el.payloadOffset + el.size
+                self._size = end - self.payloadOffset
+                self._length = numChildren
+                return self._size
+
             while True:
                 self.stream.seek(pos)
                 end = pos
@@ -639,6 +715,10 @@ class MasterElement(Element):
         # an infinite element iterates over it, so there's duplicated effort.)
         pos = self.payloadOffset
         payloadEnd = pos + self.size
+
+        if _cebml is not None:
+            yield from self._scanElements(pos, payloadEnd, nocache)
+            return
 
         while pos < payloadEnd:
             self.stream.seek(pos)
@@ -902,6 +982,11 @@ class Document(MasterElement):
         # TODO: Cache root elements, prevent unnecessary duplicates. Maybe a
         # dict keyed by offset?
         pos = self.payloadOffset
+
+        if _cebml is not None:
+            yield from self._scanElements(pos, None, nocache)
+            return
+
         while True:
             self.stream.seek(pos)
             try:
@@ -1107,6 +1192,10 @@ class Schema(object):
 
         self.globals = {}   # Elements valid for any parent, by ID
         self.children = set()  # Valid root elements, by ID
+
+        # Type codes for values the C extension can decode, by ID. Built
+        # when first used; see `_getScanTypes()`.
+        self._scanTypes = None
 
         # Parse, using the correct method for the schema format.
         schema = ET.parse(source)
@@ -1317,7 +1406,40 @@ class Schema(object):
             parent.children = set()
         parent.children.add(eid)
 
+        self._scanTypes = None
+
         return eclass
+
+    def _getScanTypes(self) -> Dict[int, int]:
+        """ Get the type codes of the elements whose values can be decoded
+            by the C extension while scanning (i.e. are precached, and use
+            their base class' standard `parse()` method), keyed by ID.
+
+            Built when first used. Changes made to an `Element` subclass'
+            `parse()` method after that will not be reflected; changes to
+            `precache` will be.
+        """
+        if self._scanTypes is None:
+            scanTypes = {}
+            if _cebml is not None:
+                # Order matters: subclasses before their base classes.
+                bases = ((DateElement, _cebml.TYPE_DATE),
+                         (UIntegerElement, _cebml.TYPE_UINT),
+                         (IntegerElement, _cebml.TYPE_INT),
+                         (FloatElement, _cebml.TYPE_FLOAT),
+                         (UnicodeElement, _cebml.TYPE_UNICODE),
+                         (StringElement, _cebml.TYPE_STRING),
+                         (BinaryElement, _cebml.TYPE_BINARY))
+                for eid, eclass in self.elements.items():
+                    if not eclass.precache:
+                        continue
+                    for base, typeCode in bases:
+                        if issubclass(eclass, base):
+                            if eclass.parse is base.parse:
+                                scanTypes[eid] = typeCode
+                            break
+            self._scanTypes = scanTypes
+        return self._scanTypes
 
     def __repr__(self):
         try:

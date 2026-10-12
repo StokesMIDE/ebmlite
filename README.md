@@ -11,6 +11,11 @@ _ebmlite_ is currently a work-in-progress. It is usable (we use it extensively),
 
 Parts of _ebmlite_ were modeled after [python-ebml](https://github.com/jspiros/python-ebml), which we had previously been using, but is not a directly derivative work. _ebmlite_ can import _python-ebml_ schemata XML (to a limited degree), but that is the extent of its cross-compatibility.
 
+### Optional C Extension
+_ebmlite_ includes an optional native extension (`ebmlite._cebml`) that speeds up reading and decoding, particularly iterating through elements. It is included in the binary wheels on PyPI, and is built automatically when installing from source if a C compiler is available; if it can't be built, _ebmlite_ installs and works as pure Python. The extension works with any seekable file-like stream (not just actual files), and produces the same results as the pure-Python code.
+
+To force the use of pure Python (e.g. for debugging), set the environment variable `EBMLITE_NO_C` to `1` before importing _ebmlite_. To check whether the extension is in use, see if `ebmlite.decoding._cebml` is not `None`.
+
 EBML Overview (the short version)
 ---------------------------------
 
